@@ -38,7 +38,7 @@ public class Webhook extends AbstractDescribableImpl<Webhook> {
 
     private String name;
     private String url;
-
+    private boolean commonProject;
     private boolean startNotification;
     private boolean notifySuccess;
     private boolean notifyAborted;
@@ -75,6 +75,12 @@ public class Webhook extends AbstractDescribableImpl<Webhook> {
     @DataBoundSetter
     public void setName(String name) {
         this.name = Util.fixEmptyAndTrim(name);
+    }
+
+    @DataBoundSetter
+    public void setCommonProject(boolean commonProject){this.commonProject=commonProject;}
+    public boolean isCommonProject() {
+        return commonProject;
     }
 
     public boolean isNotifySuccess() {

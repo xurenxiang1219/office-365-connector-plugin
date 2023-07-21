@@ -14,7 +14,10 @@
 package jenkins.plugins.office365connector;
 
 import java.util.List;
+import java.util.Optional;
 
+import hudson.EnvVars;
+import hudson.model.Cause;
 import hudson.model.Result;
 import hudson.model.Run;
 import hudson.model.TaskListener;
@@ -32,12 +35,14 @@ public class CardBuilder {
 
     private final FactsBuilder factsBuilder;
     private final ActionableBuilder potentialActionBuilder;
+    private final TaskListener taskListener;
 
     public CardBuilder(Run run, TaskListener taskListener) {
         this.run = run;
 
         factsBuilder = new FactsBuilder(run, taskListener);
         potentialActionBuilder = new ActionableBuilder(run, factsBuilder);
+        this.taskListener=taskListener;
     }
 
     public Card createStartedCard(List<FactDefinition> factDefinitions) {
@@ -55,6 +60,18 @@ public class CardBuilder {
         card.setPotentialAction(potentialActionBuilder.buildActionable());
 
         return card;
+    }
+
+    private boolean isCommonProject() {
+        WebhookJobProperty property = (WebhookJobProperty) run.getParent().getProperty(WebhookJobProperty.class);
+        if (property == null) {
+            return false;
+        }
+        List<Webhook> webhooks = property.getWebhooks();
+        for (Webhook webhook : webhooks) {
+            return webhook.isCommonProject();
+        }
+        return false;
     }
 
     public Card createCompletedCard(List<FactDefinition> factDefinitions) {
@@ -78,13 +95,50 @@ public class CardBuilder {
                 factsBuilder.addFailingSinceBuild(failingSinceBuild.getNumber());
             }
         }
-        factsBuilder.addStatus(status);
-        factsBuilder.addRemarks();
+
+        Section section = null;
+
+        if(isCommonProject()){
+            if(run.getCauses().get(0) instanceof Cause.UpstreamCause) {
+                Cause.UpstreamCause uc = (Cause.UpstreamCause) run.getCauses().get(0);
+                //System.out.println("============" + uc.getUpstreamProject());
+                //System.out.println(uc.getUpstreamBuild());
+                //System.out.println(uc.getUpstreamRun().getNumber());
+                factsBuilder.addFact("Project Build Status",uc.getUpstreamRun().getResult().toString());
+                factsBuilder.addFact("Project Build Time",uc.getUpstreamRun().getDuration()/1000.0 +" sec");
+                String activityTitle = "Notification from " + uc.getUpstreamProject();
+                String activitySubtitle = "Latest status of build " + uc.getUpstreamBuild();
+                section= new Section(activityTitle, activitySubtitle, factsBuilder.collect());
+
+                try {
+                    EnvVars envVars=uc.getUpstreamRun().getEnvironment(taskListener);
+                    envVars.keySet().stream().filter(k->k.toUpperCase().startsWith("UPSTREAM_")).forEach(key->{
+                        factsBuilder.addFact(key.toUpperCase().replace("UPSTREAM_","").replace("_"," "),envVars.get(key));
+                    });
+                    //System.out.println("---------");
+                    //envVars.keySet().stream().forEach(k-> System.out.println(k+":"+envVars.get(k)));
+                    //System.out.println("GIT_MESSAGE:"+envVars.get("GIT_MESSAGE"));
+                }catch (Exception e){
+                    e.printStackTrace();
+                }
+                summary=String.format("%s: Build #%s %s",uc.getUpstreamProject(),uc.getUpstreamBuild(),uc.getUpstreamRun().getResult());
+            }
+            Optional<FactDefinition> fdf=factDefinitions.stream().filter(fact-> fact.getName().equals("showBase")&& fact.getTemplate().equals(true)).findFirst();
+            if(fdf.isPresent()){
+                factsBuilder.addStatus(status);
+                factsBuilder.addRemarks();
+            }else{
+                factDefinitions.removeIf(fact ->fact.getName().equals("showBase"));
+            }
+        }else{
+            factsBuilder.addStatus(status);
+            factsBuilder.addRemarks();
+            section = buildSection();
+        }
+
         factsBuilder.addCommitters();
         factsBuilder.addDevelopers();
         factsBuilder.addUserFacts(factDefinitions);
-
-        Section section = buildSection();
 
         Card card = new Card(summary, section);
         card.setThemeColor(getCardThemeColor(lastResult));
